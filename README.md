@@ -30,8 +30,30 @@ Her duplicate grubundan **bir dosya korunur** (`--keep-strategy`), diğerleri ra
 | `first` (default) | Path sırasında ilk gelen |
 | `largest` | En büyük byte size |
 | `smallest` | En küçük byte size |
-| `highest_resolution` | En yüksek çözünürlük (width × height) |
-| `best` | highest_resolution + size'a fallback |
+| `highest_resolution` | En yüksek çözünürlük (width × height); tie-breaker: size |
+| `best` | **BPP-aware** composite skor — aşağıda detaylı |
+
+#### `best` stratejisi nasıl çalışır?
+
+Naif "en yüksek çözünürlük" yanıltıcı olabilir: `1024×1024 50KB` (aşırı sıkıştırılmış, JPG artifacts) vs `512×512 200KB` (temiz). Pixel sayısı yüksek olan **bilgi olarak daha bozuk** olabilir.
+
+`best` stratejisi **bytes-per-pixel (BPP)** ile quality göstergesi katar:
+
+| BPP | Yorum | Skor cezası |
+|---|---|---|
+| `< 0.05` | Aşırı sıkıştırma — JPG artifacts dolu | **Diskalifiye** (qualified_pixels=0) |
+| `0.05 – 0.15` | Düşük quality (q40-60) | Orantılı (BPP/0.15) |
+| `≥ 0.15` | Normal+ (q70-PNG) | Tam puan |
+
+**Skor:** 3-tuple descending — `(qualified_pixels, raw_pixels, size_bytes)`.
+
+Senaryolar:
+- Aynı görselin q40 vs q90 (aynı resolution) → q90 kazanır (size tie-breaker)
+- 1024×1024 q40 (BPP 0.048, DQ) vs 512×512 q95 (BPP 0.76, tam) → 512 kazanır
+- 1024×1024 q90 vs 512×512 q90 (ikisi de quality OK) → 1024 kazanır
+- Tüm grup BPP < 0.05 (hepsi bozuk) → en yüksek raw_pixels kazanır (en az kötü)
+
+**Eşik tuning:** `core/actions.py` içinde `DISQUALIFY_BPP=0.05` ve `FULL_SCORE_BPP=0.15` sabitleri.
 
 ---
 
@@ -252,6 +274,8 @@ uv run pytest
 ---
 
 ## 🏷️ Sürüm
+
+**v1.1.0** — `keep_strategy="best"` BPP-aware composite skor (`(qualified_pixels, raw_pixels, size_bytes)` 3-tuple). Aşırı sıkıştırılmış (BPP < 0.05) dosyalar diskalifiye; "büyük resolution ama bozuk piksel" tuzağı çözüldü. Scanner sonuçlarına `width`/`height` eklendi (sadece grup üyelerine — IO maliyet az). 16 yeni unit test (57 toplam).
 
 **v1.0.0** — clean release. Convention §uyumlu refactor:
 - Tek `run.py` (4 ayrı entry point birleştirildi)
