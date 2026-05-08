@@ -49,12 +49,27 @@ def test_best_score_disqualified_bpp():
 
 
 def test_best_score_partial_penalty():
-    # 800×600 (480K pix), BPP=0.10 → factor = 0.10/0.15 ≈ 0.667
+    # AI eşiği FULL_SCORE_BPP=0.5
+    # 800×600 (480K pix), BPP=0.10 → factor = 0.10/0.5 = 0.20
     f = _f("x", w=800, h=600, size=48_000)
     qualified, raw, size = _best_score(f)
     assert raw == 480_000
-    # qualified ≈ 480000 × 0.667 ≈ 320000 (±1)
-    assert 318_000 <= qualified <= 322_000
+    # qualified ≈ 480000 × 0.20 = 96000 (±1)
+    assert 94_000 <= qualified <= 98_000
+
+
+def test_best_score_full_at_ai_threshold():
+    """BPP ≥ 0.5 (AI training-ready) → tam puan."""
+    f = _f("x", w=512, h=512, size=131_072)  # BPP = 0.5 tam
+    qualified, raw, _ = _best_score(f)
+    assert qualified == raw == 262_144  # tam puan, ceza yok
+
+
+def test_best_score_lossless_clamps_to_full():
+    """BPP 3.0 (lossless PNG) — clamp 1.0'da plateau, ekstra bonus yok."""
+    f = _f("x", w=256, h=256, size=200_000)  # BPP ≈ 3.05
+    qualified, raw, _ = _best_score(f)
+    assert qualified == raw  # clamp etkisi: 1.0'da kapalı
 
 
 # ---------- senaryolar — kullanıcının BPP argümanı ----------
