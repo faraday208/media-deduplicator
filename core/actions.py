@@ -7,7 +7,7 @@ from __future__ import annotations
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, Literal
+from typing import Literal
 
 from .scanner import DuplicateGroup, ScanResult
 

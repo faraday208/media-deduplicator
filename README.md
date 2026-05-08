@@ -165,18 +165,11 @@ uv run python run.py --undo ./rejected/duplicate_report.json
 
 ---
 
-## ⚙️ Config — `config.py`
+## ⚙️ Config
 
-Default'lar env var'larla override edilebilir:
+Tüm parametreler **CLI flag'leri** üzerinden ayarlanır (`--threshold`, `--algorithm`, `--workers`, vs.). Tool dışı dosya tabanlı config yok — `media-validator`'dan farklı olarak deduplicator'ın tüm girdileri komut satırında.
 
-| Variable | Varsayılan | Etki |
-|---|---|---|
-| `DUP_MAX_WORKERS` | CPU count | Paralel worker |
-| `DUP_DEFAULT_THRESHOLD` | 10 | Similar default eşik |
-| `DUP_DEFAULT_ALGORITHM` | phash | Similar default algoritma |
-| `DUP_SCAN_TIMEOUT` | 600 | Scan timeout (saniye) |
-
-CLI flag'leri her zaman ezer.
+In-process kullanımda eşikler `core/actions.py` içindeki sabitlerle ayarlanır (BPP eşikleri için `DISQUALIFY_BPP=0.05`, `FULL_SCORE_BPP=0.5`).
 
 ---
 
