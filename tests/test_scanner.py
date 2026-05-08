@@ -148,3 +148,72 @@ def test_default_image_exts_contains_common():
     assert ".jpg" in DEFAULT_IMAGE_EXTS
     assert ".png" in DEFAULT_IMAGE_EXTS
     assert ".webp" in DEFAULT_IMAGE_EXTS
+
+
+# ---------- dimension enrichment (v1.1.0) ----------
+
+def test_exact_groups_have_width_height(exact_dup_dataset: Path):
+    """find_exact_duplicates grup üyelerine width/height ekler (best stratejisi için)."""
+    res = find_exact_duplicates(exact_dup_dataset, recursive=True)
+    assert res.groups, "Beklenen duplicate grup yok"
+    for g in res.groups:
+        for f in g.files:
+            assert f.get("width", 0) > 0, f"width eksik: {f}"
+            assert f.get("height", 0) > 0, f"height eksik: {f}"
+
+
+def test_similar_groups_have_width_height(tmp_path: Path):
+    """find_similar_images grup üyelerine width/height ekler."""
+    img = Image.new("RGB", (256, 256), (255, 100, 100))
+    img.save(tmp_path / "a.jpg", quality=95)
+    img.save(tmp_path / "b.jpg", quality=70)
+    res = find_similar_images(tmp_path, threshold=10, algorithm="phash")
+    assert res.groups
+    for g in res.groups:
+        for f in g.files:
+            assert f.get("width") == 256
+            assert f.get("height") == 256
+
+
+def test_dimension_enrichment_skips_corrupt_file(tmp_path: Path):
+    """Bozuk dosya PIL.Image.open fail eder, _enrich_with_dimensions hata yutar."""
+    from core.scanner import _enrich_with_dimensions
+    bad = tmp_path / "bad.jpg"
+    bad.write_bytes(b"not a real image")
+    info = {"path": str(bad), "size_bytes": bad.stat().st_size}
+    _enrich_with_dimensions(info)  # exception fırlatmamalı
+    # width/height yok kalır → best stratejisi size'a fallback yapar
+    assert "width" not in info
+    assert "height" not in info
+
+
+# ---------- numpy.int64 distance → JSON serializable (v1.1.0 bugfix) ----------
+
+def test_similar_distance_is_python_int_for_json(tmp_path: Path):
+    """imagehash distance numpy.int64 dönebilir; cast edilmeli ki write_report
+    JSON serialize edebilsin."""
+    import json
+    from core import write_report
+    from core.actions import apply_action
+
+    img = Image.new("RGB", (256, 256), (255, 100, 100))
+    img.save(tmp_path / "a.jpg", quality=95)
+    img.save(tmp_path / "b.jpg", quality=70)
+    res = find_similar_images(tmp_path, threshold=20, algorithm="phash")
+    assert res.groups
+
+    # Tüm distance'lar Python int olmalı (numpy int64 değil)
+    for g in res.groups:
+        for f in g.files:
+            d = f.get("distance")
+            assert isinstance(d, int), f"distance Python int değil: {type(d)}"
+            assert not isinstance(d, bool)  # int subclass
+
+    # Asıl regression testi: write_report crash etmemeli
+    ar = apply_action(res, action="none")
+    report_path = tmp_path / "test_report.json"
+    write_report(report_path, scan_result=res, action_result=ar,
+                 recursive=True, config={"mode": "similar"})
+    # JSON parse edilebiliyor mu?
+    data = json.loads(report_path.read_text())
+    assert data["mode"] == "similar"

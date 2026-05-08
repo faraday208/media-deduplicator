@@ -275,7 +275,7 @@ uv run pytest
 
 ## 🏷️ Sürüm
 
-**v1.1.0** — `keep_strategy="best"` BPP-aware composite skor (`(qualified_pixels, raw_pixels, size_bytes)` 3-tuple). Aşırı sıkıştırılmış (BPP < 0.05) dosyalar diskalifiye; "büyük resolution ama bozuk piksel" tuzağı çözüldü. Scanner sonuçlarına `width`/`height` eklendi (sadece grup üyelerine — IO maliyet az). 16 yeni unit test (57 toplam).
+**v1.1.0** — `keep_strategy="best"` BPP-aware composite skor (`(qualified_pixels, raw_pixels, size_bytes)` 3-tuple). Aşırı sıkıştırılmış (BPP < 0.05) dosyalar diskalifiye; "büyük resolution ama bozuk piksel" tuzağı çözüldü. Scanner sonuçlarına `width`/`height` eklendi (sadece grup üyelerine — IO maliyet az). Bonus bugfix: similar mode `distance` field'ı `int()` cast (eski `numpy.int64` JSON serialize fail ediyordu). 22 yeni test (63 toplam).
 
 **v1.0.0** — clean release. Convention §uyumlu refactor:
 - Tek `run.py` (4 ayrı entry point birleştirildi)

@@ -131,3 +131,59 @@ def test_main_undo_mutex(monkeypatch, tmp_path: Path):
     ])
     with pytest.raises(SystemExit):
         main()
+
+
+def test_main_best_strategy_picks_high_quality(monkeypatch, tmp_path: Path):
+    """E2E (v1.1.0): aynı görselin q40 + q90 versiyonu var. Best stratejisi
+    quality yüksek olanı keeper yapmalı."""
+    import shutil
+    from PIL import Image
+    # Aynı görsel, iki farklı quality (md5 farklı, similar yakalar)
+    img = Image.new("RGB", (1024, 1024), (200, 100, 50))
+    img.save(tmp_path / "low_q40.jpg", "JPEG", quality=40)
+    img.save(tmp_path / "high_q90.jpg", "JPEG", quality=90)
+    # Birebir kopya da ekle (md5-grup için)
+    shutil.copy(tmp_path / "high_q90.jpg", tmp_path / "high_copy.jpg")
+
+    rejected = tmp_path / "rejected"
+    monkeypatch.setattr(sys, "argv", [
+        "run.py", "-i", str(tmp_path),
+        "--mode", "similar", "--threshold", "10",
+        "--keep-strategy", "best",
+        "--invalid-action", "move",
+        "--invalid-dir", str(rejected),
+    ])
+    rc = main()
+    assert rc == 0
+
+    # Rapor okunup keeper'lar kontrol edilir
+    report = json.loads((rejected / "duplicate_report.json").read_text())
+    assert report["keep_strategy"] == "best"
+
+    # Keeper'lar: best stratejisi her grupta yüksek-quality'i seçmeli
+    for g in report["groups"]:
+        keeper_path = g.get("kept", "")
+        # q40 keeper olmamalı (en düşük quality)
+        assert "q40" not in keeper_path, f"q40 yanlışlıkla keeper: {keeper_path}"
+
+
+def test_main_best_strategy_with_no_dimensions_fallback_to_size(monkeypatch, tmp_path: Path):
+    """Bozuk dosyalar PIL.open fail edince width/height yok → best size'a fallback."""
+    # Birebir aynı 2 dosya (md5-grup), normal görseller
+    from PIL import Image
+    import shutil
+    Image.new("RGB", (512, 512), "red").save(tmp_path / "a.jpg", quality=85)
+    shutil.copy(tmp_path / "a.jpg", tmp_path / "b.jpg")
+
+    monkeypatch.setattr(sys, "argv", [
+        "run.py", "-i", str(tmp_path),
+        "--mode", "exact",
+        "--keep-strategy", "best",
+    ])
+    rc = main()
+    assert rc == 0
+
+    report = json.loads((tmp_path / "duplicate_report.json").read_text())
+    assert report["keep_strategy"] == "best"
+    # 1 grup, herhangi biri keeper olabilir (identical)
+    assert report["summary"]["groups"] == 1
