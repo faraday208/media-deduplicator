@@ -1,15 +1,26 @@
 [project]
-name = "duplicate-image-finder"
-version = "0.1.0"
-description = "Find exact and similar duplicate images using MD5 + perceptual hashing"
+name = "media-deduplicator"
+version = "1.0.0"
+description = "Media file deduplication (image — video desteği gelecek): exact (MD5) + similar (perceptual hash)"
 requires-python = ">=3.11"
 readme = "README.md"
+license = { file = "LICENSE" }
 authors = [{ name = "faraday208" }]
-keywords = ["image", "duplicate", "deduplication", "perceptual-hash", "dataset"]
+keywords = ["media", "image", "duplicate", "deduplication", "perceptual-hash", "dataset"]
 dependencies = [
     "pillow>=10.0.0",
     "imagehash>=4.3.1",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-q --tb=short"
 
 [tool.uv]
 package = false
