@@ -36,3 +36,7 @@ reports/
 # OS
 .DS_Store
 Thumbs.db
+
+# Logs
+nohup.out
+*.log
