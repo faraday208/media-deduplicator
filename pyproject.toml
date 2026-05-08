@@ -9,9 +9,6 @@ keywords = ["image", "duplicate", "deduplication", "perceptual-hash", "dataset"]
 dependencies = [
     "pillow>=10.0.0",
     "imagehash>=4.3.1",
-    "fastapi>=0.104.0",
-    "uvicorn[standard]>=0.24.0",
-    "pydantic>=2.5.0",
 ]
 
 [tool.uv]
