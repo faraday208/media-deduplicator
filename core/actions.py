@@ -60,15 +60,67 @@ def _pick_keeper(files: list[dict], strategy: KeepStrategy) -> int:
         return max(range(len(files)), key=lambda i: files[i].get("size_bytes", 0))
     if strategy == "smallest":
         return min(range(len(files)), key=lambda i: files[i].get("size_bytes", 0))
-    if strategy in ("highest_resolution", "best"):
-        # Resolution bilgisi varsa onu kullan; yoksa size'a fallback
-        def _res(i: int) -> int:
+    if strategy == "highest_resolution":
+        # Naif: en yüksek piksel sayısı; tie'da byte size
+        def _key_hr(i: int) -> tuple[int, int]:
             f = files[i]
-            return f.get("width", 0) * f.get("height", 0)
-        if any(_res(i) > 0 for i in range(len(files))):
-            return max(range(len(files)), key=_res)
-        return max(range(len(files)), key=lambda i: files[i].get("size_bytes", 0))
+            pixels = f.get("width", 0) * f.get("height", 0)
+            return (pixels, f.get("size_bytes", 0))
+        return max(range(len(files)), key=_key_hr)
+    if strategy == "best":
+        return _pick_best(files)
     return 0
+
+
+# BPP-aware "best" stratejisi parametreleri
+# - DISQUALIFY_BPP altı: aşırı sıkıştırma → ağır artifact, "bozuk" sayılır
+# - FULL_SCORE_BPP üstü: tam puan (resolution direkt sayılır)
+# - Aralarında: orantılı ceza (BPP/FULL_SCORE_BPP)
+DISQUALIFY_BPP = 0.05
+FULL_SCORE_BPP = 0.15
+
+
+def _bpp(f: dict) -> float:
+    """Bytes per pixel — quality göstergesi. Width/height bilinmiyorsa 0."""
+    pixels = f.get("width", 0) * f.get("height", 0)
+    if pixels <= 0:
+        return 0.0
+    return f.get("size_bytes", 0) / pixels
+
+
+def _best_score(f: dict) -> tuple[int, int, int]:
+    """
+    BPP-aware composite skor (3-tuple — descending tie-breaker chain):
+      1) qualified_pixels: resolution × BPP-factor (artifact varsa ceza)
+      2) raw_pixels: ham resolution (fallback — width/height yoksa 0)
+      3) size_bytes: son tie-breaker (aynı resolution+quality'de büyük byte)
+
+    DISQUALIFY_BPP altındaki dosyalar qualified_pixels=0 alır → diğer
+    adaylar varsa bunlar son sırada. Tüm grup diskalifiyeyse en az "kötü"
+    olanı (en yüksek BPP) seçilir, raw_pixels üzerinden.
+    """
+    width = f.get("width", 0)
+    height = f.get("height", 0)
+    size = f.get("size_bytes", 0)
+    pixels = width * height
+    bpp = _bpp(f)
+
+    if pixels == 0:
+        # Resolution bilgisi yok — sadece size'la sıralan
+        return (0, 0, size)
+
+    if bpp < DISQUALIFY_BPP:
+        # Aşırı sıkıştırılmış — qualified_pixels=0, ama raw_pixels yine sayılır
+        return (0, pixels, size)
+
+    factor = min(bpp / FULL_SCORE_BPP, 1.0)
+    qualified = int(pixels * factor)
+    return (qualified, pixels, size)
+
+
+def _pick_best(files: list[dict]) -> int:
+    """BPP-aware best — composite score ile en kaliteli kopyayı seç."""
+    return max(range(len(files)), key=lambda i: _best_score(files[i]))
 
 
 def _unique_target(path: Path) -> Path:

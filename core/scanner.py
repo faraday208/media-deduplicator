@@ -116,6 +116,30 @@ def _file_info(path: Path) -> dict:
     return {"path": str(path), "size_bytes": size}
 
 
+def _enrich_with_dimensions(file_dict: dict) -> None:
+    """Dict'i in-place güncelle — width, height ekle. PIL gerek; hata yok kalır.
+
+    Performans: tüm dataset için değil, sadece duplicate grup üyeleri için
+    çağrılmalı (post-processing). Böylece 100k dosyalı dataset'te bile sadece
+    grup üyelerine PIL.open uygulanır."""
+    try:
+        from PIL import Image
+        with Image.open(file_dict["path"]) as img:
+            file_dict["width"], file_dict["height"] = img.size
+    except Exception:
+        # Dosya bozuk/erişilemez → dimensions yok, downstream score'da 0 olarak ele alınır
+        pass
+
+
+def _enrich_groups_with_dimensions(groups: list[DuplicateGroup]) -> None:
+    """Tüm grup üyelerine width/height ekle (post-scan). Sadece keeper-strategy
+    'best' veya 'highest_resolution' için gerekli; ama her zaman zenginleştir
+    (rapor JSON'da da bilgi var)."""
+    for g in groups:
+        for f in g.files:
+            _enrich_with_dimensions(f)
+
+
 def _calc_space_freeable(groups: list[DuplicateGroup]) -> int:
     """Her gruptan 1 dosya korunduğunda kazanılabilecek toplam byte."""
     total = 0
@@ -164,6 +188,11 @@ def find_exact_duplicates(
                 files=[_file_info(p) for p in paths],
             ))
     groups.sort(key=lambda g: g.count, reverse=True)
+    # keep_strategy='best'/'highest_resolution' için dimensions topla
+    # (sadece grup üyeleri — 100k dosyalı dataset'te N grup × 2-5 üye)
+    if progress_cb:
+        progress_cb(total, total, "Dimensions topluyor (grup üyeleri)")
+    _enrich_groups_with_dimensions(groups)
 
     return ScanResult(
         mode="exact",
@@ -241,7 +270,8 @@ def find_similar_images(
         for p2 in paths[i + 1:]:
             if p2 in processed:
                 continue
-            distance = h1 - image_hashes[p2]
+            # imagehash distance numpy.int64 dönebilir → JSON için Python int
+            distance = int(h1 - image_hashes[p2])
             if distance <= threshold:
                 files.append({**_file_info(p2), "distance": distance})
                 processed.add(p2)
@@ -257,6 +287,10 @@ def find_similar_images(
             processed.add(p1)
 
     groups.sort(key=lambda g: g.count, reverse=True)
+    # keep_strategy='best'/'highest_resolution' için dimensions topla
+    if progress_cb:
+        progress_cb(len(paths), len(paths), "Dimensions topluyor")
+    _enrich_groups_with_dimensions(groups)
 
     return ScanResult(
         mode="similar",
