@@ -1,501 +1,268 @@
 """
-Scanner - Find duplicate and similar images
+Scanner — exact (MD5) ve similar (perceptual hash) tabanlı duplicate tespiti.
+
+Public API (in-process import edenler için):
+- collect_images(directory, recursive, allowed_exts) → list[Path]
+- find_exact_duplicates(directory, recursive, progress_cb) → ScanResult
+- find_similar_images(directory, threshold, algorithm, recursive, workers, progress_cb) → ScanResult
 """
+from __future__ import annotations
 
 import os
-import sys
-from pathlib import Path
 from collections import defaultdict
-from typing import Dict, List, Tuple, Optional, Callable, Generator
-from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Callable, Iterable
 
 from .hasher import Hasher
 
-# Config import - parent directory'den
-sys.path.insert(0, str(Path(__file__).parent.parent))
-try:
-    from config import MAX_WORKERS, DEFAULT_THRESHOLD, MAX_THRESHOLD as CONFIG_MAX_THRESHOLD
-except ImportError:
-    MAX_WORKERS = os.cpu_count() or 4
-    DEFAULT_THRESHOLD = 10
-    CONFIG_MAX_THRESHOLD = 64
+DEFAULT_IMAGE_EXTS: frozenset[str] = frozenset({
+    ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff", ".tif"
+})
+
+ProgressCallback = Callable[[int, int, str], None]
+
+
+@dataclass
+class DuplicateGroup:
+    """Bir duplicate (exact) veya similar (perceptual) grubu.
+
+    `kept` field'ı keep_strategy uygulandıktan sonra hangi dosyanın korunacağını
+    işaretler — apply_action bu dışındakileri işler.
+    """
+    hash: str
+    algorithm: str          # "md5" | "phash" | "ahash" | "dhash" | "whash"
+    files: list[dict]       # her item: {"path": str, "size_bytes": int, "distance": int (similar için)}
+    threshold: int | None = None  # similar için; exact'te None
+    kept: str = ""          # apply_action sonrası set edilir
+
+    @property
+    def count(self) -> int:
+        return len(self.files)
+
+    @property
+    def removable_count(self) -> int:
+        return max(0, self.count - 1)
+
+    def to_dict(self) -> dict:
+        d = {
+            "hash": self.hash,
+            "algorithm": self.algorithm,
+            "count": self.count,
+            "files": list(self.files),
+        }
+        if self.threshold is not None:
+            d["threshold"] = self.threshold
+        if self.kept:
+            d["kept"] = self.kept
+        return d
 
 
 @dataclass
 class ScanResult:
-    """Result of a duplicate/similar scan"""
+    """Bir tarama sonucu — exact veya similar."""
+    mode: str                          # "exact" | "similar"
+    source_root: str
     total_scanned: int
     unique_count: int
-    groups: List[Dict]
-    space_can_free: int
-    scanned_directory: str
+    groups: list[DuplicateGroup] = field(default_factory=list)
+    space_freeable_bytes: int = 0
 
     @property
     def has_duplicates(self) -> bool:
         return len(self.groups) > 0
 
     @property
-    def duplicate_count(self) -> int:
-        """Number of files that can be removed"""
-        return sum(len(g['files']) - 1 for g in self.groups)
+    def removable_count(self) -> int:
+        return sum(g.removable_count for g in self.groups)
 
 
-class DuplicateScanner:
-    """Find exact duplicate images using MD5 hash"""
+def collect_images(
+    directory: Path | str,
+    *,
+    recursive: bool = True,
+    allowed_exts: Iterable[str] = DEFAULT_IMAGE_EXTS,
+) -> list[Path]:
+    """Bir dizindeki görselleri topla. Sıralı (deterministik) Path listesi."""
+    root = Path(directory)
+    if not root.is_dir():
+        return []
 
-    def __init__(self):
-        self.hasher = Hasher()
+    exts = {e.lower() for e in allowed_exts}
+    out: list[Path] = []
 
-    def scan_directory(self, directory: str, recursive: bool = True) -> List[str]:
-        """
-        Scan directory for image files
+    if recursive:
+        for dirpath, _dirnames, filenames in os.walk(root, followlinks=False):
+            for fn in filenames:
+                p = Path(dirpath) / fn
+                if p.suffix.lower() in exts:
+                    out.append(p)
+    else:
+        for entry in root.iterdir():
+            if entry.is_file() and entry.suffix.lower() in exts:
+                out.append(entry)
 
-        Args:
-            directory: Path to scan
-            recursive: Whether to scan subdirectories
+    out.sort()
+    return out
 
-        Returns:
-            List of image file paths
-        """
-        image_files = []
-        dir_path = Path(directory)
 
-        if not dir_path.exists() or not dir_path.is_dir():
-            return image_files
+def _file_info(path: Path) -> dict:
+    """Bir dosyanın size_bytes + path bilgisini topla. Hata durumunda size=0."""
+    try:
+        size = path.stat().st_size
+    except OSError:
+        size = 0
+    return {"path": str(path), "size_bytes": size}
 
-        if recursive:
-            for root, _, files in os.walk(directory):
-                for filename in files:
-                    if Hasher.is_image_file(filename):
-                        image_files.append(os.path.join(root, filename))
-        else:
-            for item in dir_path.iterdir():
-                if item.is_file() and Hasher.is_image_file(str(item)):
-                    image_files.append(str(item))
 
-        return sorted(image_files)
+def _calc_space_freeable(groups: list[DuplicateGroup]) -> int:
+    """Her gruptan 1 dosya korunduğunda kazanılabilecek toplam byte."""
+    total = 0
+    for g in groups:
+        if not g.files:
+            continue
+        # Korunan dosya hariç diğerlerinin boyutu
+        sizes = [f.get("size_bytes", 0) for f in g.files]
+        sizes.sort(reverse=True)
+        total += sum(sizes[1:])  # en büyüğü tut, diğerlerini at varsayımı
+    return total
 
-    def find_duplicates(
-        self,
-        directory: str,
-        recursive: bool = True,
-        progress_callback: Optional[Callable[[int, int, str], None]] = None
-    ) -> ScanResult:
-        """
-        Find exact duplicate images
 
-        Args:
-            directory: Directory to scan
-            recursive: Scan subdirectories
-            progress_callback: Optional callback(current, total, message)
+def find_exact_duplicates(
+    directory: Path | str,
+    *,
+    recursive: bool = True,
+    allowed_exts: Iterable[str] = DEFAULT_IMAGE_EXTS,
+    progress_cb: ProgressCallback | None = None,
+) -> ScanResult:
+    """MD5 hash ile birebir aynı dosyaları bul. Tek thread (md5 IO-bound)."""
+    root = Path(directory).resolve()
+    images = collect_images(root, recursive=recursive, allowed_exts=allowed_exts)
+    total = len(images)
 
-        Returns:
-            ScanResult with duplicate groups
-        """
-        # Scan for images
-        if progress_callback:
-            progress_callback(0, 0, "Resim dosyaları taranıyor...")
+    if total == 0:
+        return ScanResult(mode="exact", source_root=str(root), total_scanned=0, unique_count=0)
 
-        image_files = self.scan_directory(directory, recursive)
-        total = len(image_files)
+    if progress_cb:
+        progress_cb(0, total, "MD5 hesaplanıyor")
 
-        if total == 0:
-            return ScanResult(
-                total_scanned=0,
-                unique_count=0,
-                groups=[],
-                space_can_free=0,
-                scanned_directory=directory
-            )
+    hash_map: dict[str, list[Path]] = defaultdict(list)
+    for idx, p in enumerate(images, 1):
+        h = Hasher.calculate_md5(str(p))
+        if h:
+            hash_map[h].append(p)
+        if progress_cb and (idx % 50 == 0 or idx == total):
+            progress_cb(idx, total, f"MD5: {idx}/{total}")
 
-        # Calculate hashes
-        hash_map = defaultdict(list)
+    groups: list[DuplicateGroup] = []
+    for h, paths in hash_map.items():
+        if len(paths) > 1:
+            groups.append(DuplicateGroup(
+                hash=h,
+                algorithm="md5",
+                files=[_file_info(p) for p in paths],
+            ))
+    groups.sort(key=lambda g: g.count, reverse=True)
 
-        for idx, filepath in enumerate(image_files, 1):
-            if progress_callback and (idx % 50 == 0 or idx == total):
-                progress_callback(idx, total, f"Hash hesaplanıyor: {idx}/{total}")
+    return ScanResult(
+        mode="exact",
+        source_root=str(root),
+        total_scanned=total,
+        unique_count=len(hash_map),
+        groups=groups,
+        space_freeable_bytes=_calc_space_freeable(groups),
+    )
 
-            file_hash = Hasher.calculate_md5(filepath)
-            if file_hash:
-                hash_map[file_hash].append(filepath)
 
-        # Find duplicates (groups with more than 1 file)
-        groups = []
-        for file_hash, files in hash_map.items():
-            if len(files) > 1:
-                groups.append({
-                    'hash': file_hash,
-                    'hash_algorithm': 'md5',
-                    'files': files,
-                    'count': len(files)
-                })
+def find_similar_images(
+    directory: Path | str,
+    *,
+    threshold: int = 10,
+    algorithm: str = "phash",
+    recursive: bool = True,
+    workers: int | None = None,
+    allowed_exts: Iterable[str] = DEFAULT_IMAGE_EXTS,
+    progress_cb: ProgressCallback | None = None,
+) -> ScanResult:
+    """Perceptual hash ile görsel olarak benzer dosyaları bul (paralel hash)."""
+    if not Hasher.is_perceptual_hash_available():
+        raise RuntimeError(
+            "imagehash kütüphanesi yüklü değil. `uv sync` ile yükleyin."
+        )
 
-        # Sort by count (most duplicates first)
-        groups.sort(key=lambda x: x['count'], reverse=True)
+    root = Path(directory).resolve()
+    images = collect_images(root, recursive=recursive, allowed_exts=allowed_exts)
+    total = len(images)
 
-        # Calculate space savings
-        space_can_free = 0
-        for group in groups:
+    if total == 0:
+        return ScanResult(mode="similar", source_root=str(root), total_scanned=0, unique_count=0)
+
+    if workers is None:
+        workers = os.cpu_count() or 4
+
+    if progress_cb:
+        progress_cb(0, total, f"Perceptual hash ({algorithm}, {workers} worker)")
+
+    image_hashes: dict[Path, object] = {}
+    completed = 0
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futures = {ex.submit(Hasher.calculate_perceptual_hash, str(p), algorithm): p for p in images}
+        for fut in as_completed(futures):
+            completed += 1
+            p = futures[fut]
             try:
-                file_size = os.path.getsize(group['files'][0])
-                space_can_free += file_size * (len(group['files']) - 1)
-            except OSError:
-                pass
+                h = fut.result()
+            except Exception:
+                h = None
+            if h is not None:
+                image_hashes[p] = h
+            if progress_cb and (completed % 25 == 0 or completed == total):
+                progress_cb(completed, total, f"Hash: {completed}/{total}")
 
-        return ScanResult(
-            total_scanned=total,
-            unique_count=len(hash_map),
-            groups=groups,
-            space_can_free=space_can_free,
-            scanned_directory=directory
-        )
+    if not image_hashes:
+        return ScanResult(mode="similar", source_root=str(root), total_scanned=total, unique_count=0)
 
-    def find_duplicates_generator(
-        self,
-        directory: str,
-        recursive: bool = True
-    ) -> Generator[Tuple[int, int, str], None, ScanResult]:
-        """
-        Find duplicates with generator for progress updates
+    if progress_cb:
+        progress_cb(0, len(image_hashes), "Benzerlik karşılaştırması")
 
-        Yields:
-            Tuple of (current, total, status_message)
+    groups: list[DuplicateGroup] = []
+    processed: set[Path] = set()
+    paths = list(image_hashes.keys())
 
-        Returns:
-            ScanResult
-        """
-        yield 0, 0, "Resim dosyaları taranıyor..."
+    for i, p1 in enumerate(paths):
+        if p1 in processed:
+            continue
+        if progress_cb and (i + 1) % 50 == 0:
+            progress_cb(i + 1, len(paths), f"Karşılaştırma: {i+1}/{len(paths)}")
 
-        image_files = self.scan_directory(directory, recursive)
-        total = len(image_files)
-
-        if total == 0:
-            yield 0, 0, "Resim dosyası bulunamadı"
-            return ScanResult(
-                total_scanned=0,
-                unique_count=0,
-                groups=[],
-                space_can_free=0,
-                scanned_directory=directory
-            )
-
-        yield 0, total, f"{total} resim bulundu, hash hesaplanıyor..."
-
-        hash_map = defaultdict(list)
-
-        for idx, filepath in enumerate(image_files, 1):
-            if idx % 50 == 0 or idx == total:
-                yield idx, total, f"Hash hesaplanıyor: {idx}/{total}"
-
-            file_hash = Hasher.calculate_md5(filepath)
-            if file_hash:
-                hash_map[file_hash].append(filepath)
-
-        # Build groups
-        groups = []
-        for file_hash, files in hash_map.items():
-            if len(files) > 1:
-                groups.append({
-                    'hash': file_hash,
-                    'hash_algorithm': 'md5',
-                    'files': files,
-                    'count': len(files)
-                })
-
-        groups.sort(key=lambda x: x['count'], reverse=True)
-
-        space_can_free = 0
-        for group in groups:
-            try:
-                file_size = os.path.getsize(group['files'][0])
-                space_can_free += file_size * (len(group['files']) - 1)
-            except OSError:
-                pass
-
-        return ScanResult(
-            total_scanned=total,
-            unique_count=len(hash_map),
-            groups=groups,
-            space_can_free=space_can_free,
-            scanned_directory=directory
-        )
-
-
-class SimilarScanner:
-    """Find visually similar images using perceptual hashing"""
-
-    DEFAULT_THRESHOLD = DEFAULT_THRESHOLD  # From config
-    MAX_THRESHOLD = CONFIG_MAX_THRESHOLD   # From config
-
-    def __init__(self, max_workers: int = None):
-        self.hasher = Hasher()
-        self.max_workers = max_workers or MAX_WORKERS
-
-    def scan_directory(self, directory: str, recursive: bool = True) -> List[str]:
-        """Scan directory for image files"""
-        return DuplicateScanner().scan_directory(directory, recursive)
-
-    def find_similar(
-        self,
-        directory: str,
-        threshold: int = 10,
-        algorithm: str = 'average_hash',
-        recursive: bool = True,
-        progress_callback: Optional[Callable[[int, int, str], None]] = None
-    ) -> ScanResult:
-        """
-        Find visually similar images
-
-        Args:
-            directory: Directory to scan
-            threshold: Max Hamming distance (0=identical, 64=different)
-            algorithm: Hash algorithm to use
-            recursive: Scan subdirectories
-            progress_callback: Optional callback(current, total, message)
-
-        Returns:
-            ScanResult with similar groups
-        """
-        if not Hasher.is_perceptual_hash_available():
-            return ScanResult(
-                total_scanned=0,
-                unique_count=0,
-                groups=[],
-                space_can_free=0,
-                scanned_directory=directory
-            )
-
-        # Scan for images
-        if progress_callback:
-            progress_callback(0, 0, "Resim dosyaları taranıyor...")
-
-        image_files = self.scan_directory(directory, recursive)
-        total = len(image_files)
-
-        if total == 0:
-            return ScanResult(
-                total_scanned=0,
-                unique_count=0,
-                groups=[],
-                space_can_free=0,
-                scanned_directory=directory
-            )
-
-        # Calculate perceptual hashes in parallel
-        image_hashes = {}
-        completed = 0
-
-        def calc_hash(filepath):
-            return filepath, Hasher.calculate_perceptual_hash(filepath, algorithm)
-
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            futures = {executor.submit(calc_hash, fp): fp for fp in image_files}
-
-            for future in as_completed(futures):
-                completed += 1
-                if progress_callback and (completed % 25 == 0 or completed == total):
-                    progress_callback(completed, total, f"Hash hesaplanıyor: {completed}/{total} ({self.max_workers} worker)")
-
-                filepath, img_hash = future.result()
-                if img_hash is not None:
-                    image_hashes[filepath] = img_hash
-
-        if not image_hashes:
-            return ScanResult(
-                total_scanned=total,
-                unique_count=0,
-                groups=[],
-                space_can_free=0,
-                scanned_directory=directory
-            )
-
-        # Find similar groups
-        if progress_callback:
-            progress_callback(0, len(image_hashes), "Benzerlikler karşılaştırılıyor...")
-
-        groups = []
-        processed = set()
-        file_list = list(image_hashes.keys())
-
-        for i, file1 in enumerate(file_list):
-            if file1 in processed:
+        h1 = image_hashes[p1]
+        files = [{**_file_info(p1), "distance": 0}]
+        for p2 in paths[i + 1:]:
+            if p2 in processed:
                 continue
+            distance = h1 - image_hashes[p2]
+            if distance <= threshold:
+                files.append({**_file_info(p2), "distance": distance})
+                processed.add(p2)
 
-            if progress_callback and (i + 1) % 50 == 0:
-                progress_callback(i + 1, len(file_list), f"Karşılaştırılıyor: {i+1}/{len(file_list)}")
+        if len(files) > 1:
+            files.sort(key=lambda x: x["distance"])
+            groups.append(DuplicateGroup(
+                hash=str(h1),
+                algorithm=algorithm,
+                files=files,
+                threshold=threshold,
+            ))
+            processed.add(p1)
 
-            hash1 = image_hashes[file1]
-            # First file is reference with distance 0
-            group_files = [{'path': file1, 'distance': 0}]
+    groups.sort(key=lambda g: g.count, reverse=True)
 
-            for file2 in file_list[i + 1:]:
-                if file2 in processed:
-                    continue
-
-                hash2 = image_hashes[file2]
-                distance = hash1 - hash2
-
-                if distance <= threshold:
-                    group_files.append({'path': file2, 'distance': distance})
-                    processed.add(file2)
-
-            if len(group_files) > 1:
-                # Sort by distance (most similar first)
-                group_files.sort(key=lambda x: x['distance'])
-                groups.append({
-                    'reference_hash': str(hash1),
-                    'hash_algorithm': algorithm,
-                    'threshold': threshold,
-                    'files': group_files,
-                    'similarity_count': len(group_files)
-                })
-                processed.add(file1)
-
-        groups.sort(key=lambda x: x['similarity_count'], reverse=True)
-
-        # Calculate estimated space savings
-        space_can_free = 0
-        for group in groups:
-            sizes = []
-            for file_info in group['files']:
-                try:
-                    sizes.append(os.path.getsize(file_info['path']))
-                except OSError:
-                    pass
-            if sizes:
-                avg_size = sum(sizes) / len(sizes)
-                space_can_free += int(avg_size * (len(sizes) - 1))
-
-        return ScanResult(
-            total_scanned=total,
-            unique_count=len(image_hashes),
-            groups=groups,
-            space_can_free=space_can_free,
-            scanned_directory=directory
-        )
-
-    def find_similar_generator(
-        self,
-        directory: str,
-        threshold: int = 10,
-        algorithm: str = 'average_hash',
-        recursive: bool = True
-    ) -> Generator[Tuple[int, int, str], None, ScanResult]:
-        """
-        Find similar images with generator for progress updates
-
-        Yields:
-            Tuple of (current, total, status_message)
-
-        Returns:
-            ScanResult
-        """
-        if not Hasher.is_perceptual_hash_available():
-            yield 0, 0, "Hata: imagehash kütüphanesi yüklü değil"
-            return ScanResult(
-                total_scanned=0, unique_count=0, groups=[],
-                space_can_free=0, scanned_directory=directory
-            )
-
-        yield 0, 0, "Resim dosyaları taranıyor..."
-
-        image_files = self.scan_directory(directory, recursive)
-        total = len(image_files)
-
-        if total == 0:
-            yield 0, 0, "Resim dosyası bulunamadı"
-            return ScanResult(
-                total_scanned=0, unique_count=0, groups=[],
-                space_can_free=0, scanned_directory=directory
-            )
-
-        yield 0, total, f"{total} resim bulundu, hash hesaplanıyor ({self.max_workers} worker)..."
-
-        # Calculate perceptual hashes in parallel
-        image_hashes = {}
-        completed = 0
-
-        def calc_hash(filepath):
-            return filepath, Hasher.calculate_perceptual_hash(filepath, algorithm)
-
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            futures = {executor.submit(calc_hash, fp): fp for fp in image_files}
-
-            for future in as_completed(futures):
-                completed += 1
-                if completed % 25 == 0 or completed == total:
-                    yield completed, total, f"Hash hesaplanıyor: {completed}/{total} ({self.max_workers} worker)"
-
-                filepath, img_hash = future.result()
-                if img_hash is not None:
-                    image_hashes[filepath] = img_hash
-
-        if not image_hashes:
-            yield 0, 0, "Hiçbir resimden hash alınamadı"
-            return ScanResult(
-                total_scanned=total, unique_count=0, groups=[],
-                space_can_free=0, scanned_directory=directory
-            )
-
-        yield 0, len(image_hashes), "Benzerlikler karşılaştırılıyor..."
-
-        groups = []
-        processed = set()
-        file_list = list(image_hashes.keys())
-
-        for i, file1 in enumerate(file_list):
-            if file1 in processed:
-                continue
-
-            if (i + 1) % 50 == 0:
-                yield i + 1, len(file_list), f"Karşılaştırılıyor: {i+1}/{len(file_list)}"
-
-            hash1 = image_hashes[file1]
-            # First file is reference with distance 0
-            group_files = [{'path': file1, 'distance': 0}]
-
-            for file2 in file_list[i + 1:]:
-                if file2 in processed:
-                    continue
-
-                hash2 = image_hashes[file2]
-                distance = hash1 - hash2
-
-                if distance <= threshold:
-                    group_files.append({'path': file2, 'distance': distance})
-                    processed.add(file2)
-
-            if len(group_files) > 1:
-                # Sort by distance (most similar first)
-                group_files.sort(key=lambda x: x['distance'])
-                groups.append({
-                    'reference_hash': str(hash1),
-                    'hash_algorithm': algorithm,
-                    'threshold': threshold,
-                    'files': group_files,
-                    'similarity_count': len(group_files)
-                })
-                processed.add(file1)
-
-        groups.sort(key=lambda x: x['similarity_count'], reverse=True)
-
-        space_can_free = 0
-        for group in groups:
-            sizes = []
-            for file_info in group['files']:
-                try:
-                    sizes.append(os.path.getsize(file_info['path']))
-                except OSError:
-                    pass
-            if sizes:
-                avg_size = sum(sizes) / len(sizes)
-                space_can_free += int(avg_size * (len(sizes) - 1))
-
-        return ScanResult(
-            total_scanned=total,
-            unique_count=len(image_hashes),
-            groups=groups,
-            space_can_free=space_can_free,
-            scanned_directory=directory
-        )
+    return ScanResult(
+        mode="similar",
+        source_root=str(root),
+        total_scanned=total,
+        unique_count=len(image_hashes),
+        groups=groups,
+        space_freeable_bytes=_calc_space_freeable(groups),
+    )
