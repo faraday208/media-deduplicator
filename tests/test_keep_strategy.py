@@ -1,5 +1,5 @@
 """keep_strategy senaryoları, özellikle BPP-aware 'best'."""
-from core.actions import (
+from dedup_core.actions import (
     DISQUALIFY_BPP,
     FULL_SCORE_BPP,
     _best_score,

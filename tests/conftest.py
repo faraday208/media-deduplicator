@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-# Repo kökünü path'e ekle ki `from core import ...` çalışsın
+# Repo kökünü path'e ekle ki `from dedup_core import ...` çalışsın
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
