@@ -72,12 +72,20 @@ def _pick_keeper(files: list[dict], strategy: KeepStrategy) -> int:
     return 0
 
 
-# BPP-aware "best" stratejisi parametreleri
-# - DISQUALIFY_BPP altı: aşırı sıkıştırma → ağır artifact, "bozuk" sayılır
-# - FULL_SCORE_BPP üstü: tam puan (resolution direkt sayılır)
-# - Aralarında: orantılı ceza (BPP/FULL_SCORE_BPP)
+# BPP-aware "best" stratejisi parametreleri (AI training context).
+#
+# Eşikler **insan gözü için değil, AI/VAE encoder için** ayarlandı:
+# - JPG q40-60 (BPP 0.05-0.15) gözle temiz görünür ama JPG block-artifact'leri
+#   diffusion model VAE encode sırasında "öğrenilecek pattern" gibi gözükür
+#   → training noise. Bu yüzden 0.15 "AI safe" eşiği DEĞİL.
+# - JPG q90+ veya WebP q90+ (BPP ≥ 0.5) artifact-free, AI için training-ready
+# - Lossless PNG (BPP ~3) ekstra bonus getirmez — clamp 1.0'da plateau
+#
+# DISQUALIFY_BPP altı: gerçekten yıkıcı (q<10) — model bile öğrenemez
+# FULL_SCORE_BPP üstü: tam puan (resolution direkt sayılır)
+# Aralarında: orantılı ceza (BPP/FULL_SCORE_BPP)
 DISQUALIFY_BPP = 0.05
-FULL_SCORE_BPP = 0.15
+FULL_SCORE_BPP = 0.5  # AI training quality threshold (eski göz-odaklı 0.15'ten yükseltildi)
 
 
 def _bpp(f: dict) -> float:

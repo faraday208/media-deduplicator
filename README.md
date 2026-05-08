@@ -37,13 +37,19 @@ Her duplicate grubundan **bir dosya korunur** (`--keep-strategy`), diğerleri ra
 
 Naif "en yüksek çözünürlük" yanıltıcı olabilir: `1024×1024 50KB` (aşırı sıkıştırılmış, JPG artifacts) vs `512×512 200KB` (temiz). Pixel sayısı yüksek olan **bilgi olarak daha bozuk** olabilir.
 
-`best` stratejisi **bytes-per-pixel (BPP)** ile quality göstergesi katar:
+`best` stratejisi **bytes-per-pixel (BPP)** ile quality göstergesi katar.
+Eşikler **AI training (VAE encoder, diffusion model)** için ayarlandı — göz değil:
 
 | BPP | Yorum | Skor cezası |
 |---|---|---|
-| `< 0.05` | Aşırı sıkıştırma — JPG artifacts dolu | **Diskalifiye** (qualified_pixels=0) |
-| `0.05 – 0.15` | Düşük quality (q40-60) | Orantılı (BPP/0.15) |
-| `≥ 0.15` | Normal+ (q70-PNG) | Tam puan |
+| `< 0.05` | Yıkıcı (q<10 JPG, ağır artifact) — model bile öğrenemez | **Diskalifiye** |
+| `0.05 – 0.5` | Suboptimal (JPG q70 altı) — block-artifact'ler training noise olur | Orantılı (BPP/0.5) |
+| `≥ 0.5` | **AI training-ready** (JPG q90+, WebP q90+, PNG) | Tam puan |
+
+> **Niçin 0.5 eşiği?** Göz JPG q40-60'ı temiz görür ama block-artifact'leri
+> diffusion model VAE encode sırasında "öğrenilecek pattern" gibi gözükür
+> ve training kalitesini düşürür. AI dataset için 0.5+ baseline (q90+ veya
+> lossless) önerilir.
 
 **Skor:** 3-tuple descending — `(qualified_pixels, raw_pixels, size_bytes)`.
 
@@ -53,7 +59,7 @@ Senaryolar:
 - 1024×1024 q90 vs 512×512 q90 (ikisi de quality OK) → 1024 kazanır
 - Tüm grup BPP < 0.05 (hepsi bozuk) → en yüksek raw_pixels kazanır (en az kötü)
 
-**Eşik tuning:** `core/actions.py` içinde `DISQUALIFY_BPP=0.05` ve `FULL_SCORE_BPP=0.15` sabitleri.
+**Eşik tuning:** `core/actions.py` içinde `DISQUALIFY_BPP=0.05` ve `FULL_SCORE_BPP=0.5` sabitleri. Insan-gözü kullanımı için `FULL_SCORE_BPP`'yi 0.15'e düşürebilirsin (eski default).
 
 ---
 
@@ -274,6 +280,8 @@ uv run pytest
 ---
 
 ## 🏷️ Sürüm
+
+**v1.2.0** — `FULL_SCORE_BPP` 0.15 → **0.5** (AI training context). Eşik göz-odaklı baseline'dan (JPG q70+) AI-odaklıya (JPG q90+ / lossless) yükseltildi: VAE encoder block-artifact'leri training noise olarak gözüktüğü için JPG q70 altı suboptimal. UI BPP renk eşikleri de senkron (sarı 0.05-0.5, yeşil ≥0.5). 2 yeni test (65 toplam). Insan-gözü kullanımı için sabit override edilebilir.
 
 **v1.1.0** — `keep_strategy="best"` BPP-aware composite skor (`(qualified_pixels, raw_pixels, size_bytes)` 3-tuple). Aşırı sıkıştırılmış (BPP < 0.05) dosyalar diskalifiye; "büyük resolution ama bozuk piksel" tuzağı çözüldü. Scanner sonuçlarına `width`/`height` eklendi (sadece grup üyelerine — IO maliyet az). Bonus bugfix: similar mode `distance` field'ı `int()` cast (eski `numpy.int64` JSON serialize fail ediyordu). 22 yeni test (63 toplam).
 
