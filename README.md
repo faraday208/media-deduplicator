@@ -17,7 +17,7 @@ Duplicate ve benzer görselleri bulan, REST API ve CLI desteği sunan güçlü b
 - **Varyasyon tespiti**: Yeniden boyutlandırılmış, sıkıştırılmış versiyonları yakalar
 
 ### REST API (FastAPI)
-- **n8n entegrasyonu**: Otomasyon workflow'ları için HTTP endpoint'leri
+- **HTTP endpoint'leri**: Gradio UI ve diğer tüketiciler için
 - **Async task desteği**: Büyük dizinler için arka plan tarama
 - **Progress tracking**: Task ilerleme durumu takibi
 - **Swagger UI**: Interaktif API dokümantasyonu (`/docs`)
@@ -139,11 +139,7 @@ python3 delete_duplicates.py reports/duplicate_report_*.json
 python3 delete_duplicates.py reports/duplicate_report_*.json --execute
 ```
 
-## n8n Entegrasyonu
-
-Hazır n8n workflow'ları `n8n-workflows/` dizininde bulunur.
-
-### HTTP Request Node Ayarları
+## HTTP API Kullanımı
 
 ```
 Method: POST
@@ -152,13 +148,7 @@ Body Content Type: JSON
 Body: {"directory": "/path/to/images"}
 ```
 
-### Örnek Workflow
-
-1. **Trigger**: Cron veya Webhook
-2. **HTTP Request**: Duplicate tarama başlat
-3. **IF Node**: `is_clean` kontrolü
-4. **HTTP Request**: Silme işlemi (dry_run: false)
-5. **Notification**: Sonuç bildirimi
+Detaylı endpoint dokümantasyonu için Swagger UI: `http://localhost:8001/docs`
 
 ## Konfigürasyon
 
@@ -236,9 +226,6 @@ Tüm ayarlar `config.py` dosyasından veya environment variable'lardan okunur.
 │   └── reporter.py          # JSON/TXT rapor oluşturma
 ├── scripts/
 │   └── restart-api.sh       # API restart script
-├── n8n-workflows/
-│   ├── Duplicate Image Scanner.json
-│   └── sub-api-health-check.json
 ├── reports/                 # Oluşturulan raporlar (gitignore)
 ├── venv/                    # Virtual environment (gitignore)
 ├── app.py                   # Interactive CLI uygulaması
@@ -404,9 +391,8 @@ lsof -i :8001
 
 | Özellik | CLI | API |
 |---------|-----|-----|
-| Interaktivite | Yüksek | Düşük |
-| Otomasyon | Zor | Kolay |
-| n8n Entegrasyonu | Yok | Var |
+| Interaktivite | Yüksek | Gradio UI üstünden |
+| Multi-tüketici | Tek terminal | Paralel istemci |
 | Progress Tracking | Terminal | Task endpoint |
 | Batch İşlem | Sınırlı | Kolay |
 
@@ -414,7 +400,6 @@ lsof -i :8001
 
 ### v3.0.0 - REST API & Paralel İşlem
 - FastAPI REST API eklendi
-- n8n entegrasyonu için hazır workflow'lar
 - Paralel hash hesaplama (ThreadPoolExecutor)
 - Async task desteği ve progress tracking
 - Akıllı silme stratejileri (largest, smallest, best, highest_resolution)
