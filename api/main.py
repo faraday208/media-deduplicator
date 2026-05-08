@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Duplicate Image Finder - FastAPI REST API
-n8n ve diğer otomasyon araçları için REST API endpoint'leri
+Gradio UI ve diğer tüketiciler için REST API endpoint'leri.
 
 Usage:
     uvicorn api.main:app --host 0.0.0.0 --port 8001 --reload
@@ -53,7 +53,7 @@ from api.schemas import (
 API_VERSION = "1.0.0"
 API_TITLE = "Duplicate Image Finder API"
 API_DESCRIPTION = """
-n8n ve otomasyon araçları için Duplicate Image Finder REST API.
+Duplicate Image Finder REST API.
 
 ## Özellikler
 
@@ -62,9 +62,9 @@ n8n ve otomasyon araçları için Duplicate Image Finder REST API.
 * **Silme** - Duplicate/benzer dosyaları sil
 * **Raporlama** - JSON/TXT raporları oluştur ve listele
 
-## n8n Entegrasyonu
+## Kullanım
 
-HTTP Request node ile kullanılabilir:
+HTTP POST ile çağrılır (Gradio UI veya curl/script'ler için):
 - Method: POST
 - URL: http://localhost:8001/api/v1/scan/duplicates
 - Body: {"directory": "/path/to/images"}

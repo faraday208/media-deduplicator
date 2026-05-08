@@ -1,5 +1,5 @@
 #!/bin/bash
-# API Restart Script for n8n workflow
+# API Restart Script
 
 # Kill existing API process
 pkill -f "uvicorn.*8001" 2>/dev/null || true
