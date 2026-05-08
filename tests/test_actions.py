@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from core import (
+from dedup_core import (
     apply_action,
     find_exact_duplicates,
     undo_from_report,

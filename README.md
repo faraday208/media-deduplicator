@@ -176,7 +176,7 @@ In-process kullanımda eşikler `core/actions.py` içindeki sabitlerle ayarlanı
 ## 🔌 In-process (library) kullanım
 
 ```python
-from core import (
+from dedup_core import (
     find_exact_duplicates, find_similar_images,
     apply_action, undo_from_report, write_report,
 )

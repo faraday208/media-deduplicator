@@ -24,7 +24,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from core import (
+from dedup_core import (
     DEFAULT_IMAGE_EXTS,
     DEFAULT_REPORT_NAME,
     Hasher,

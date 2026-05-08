@@ -4,13 +4,13 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from core import (
+from dedup_core import (
     DEFAULT_IMAGE_EXTS,
     collect_images,
     find_exact_duplicates,
     find_similar_images,
 )
-from core.scanner import _calc_space_freeable, _file_info
+from dedup_core.scanner import _calc_space_freeable, _file_info
 
 
 # ---------- collect_images ----------
@@ -177,7 +177,7 @@ def test_similar_groups_have_width_height(tmp_path: Path):
 
 def test_dimension_enrichment_skips_corrupt_file(tmp_path: Path):
     """Bozuk dosya PIL.Image.open fail eder, _enrich_with_dimensions hata yutar."""
-    from core.scanner import _enrich_with_dimensions
+    from dedup_core.scanner import _enrich_with_dimensions
     bad = tmp_path / "bad.jpg"
     bad.write_bytes(b"not a real image")
     info = {"path": str(bad), "size_bytes": bad.stat().st_size}
@@ -193,8 +193,8 @@ def test_similar_distance_is_python_int_for_json(tmp_path: Path):
     """imagehash distance numpy.int64 dönebilir; cast edilmeli ki write_report
     JSON serialize edebilsin."""
     import json
-    from core import write_report
-    from core.actions import apply_action
+    from dedup_core import write_report
+    from dedup_core.actions import apply_action
 
     img = Image.new("RGB", (256, 256), (255, 100, 100))
     img.save(tmp_path / "a.jpg", quality=95)
