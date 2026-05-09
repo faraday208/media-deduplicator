@@ -95,17 +95,16 @@ def test_action_no_groups_no_op(all_unique_dataset: Path, tmp_path: Path):
     assert ar.skipped == 0
 
 
-def test_action_unique_target_no_overwrite(tmp_path: Path):
-    """Aynı isimli dosyalar farklı klasörlerde varsa, taşıma sırasında çakışma _1, _2 yapar."""
-    # İki farklı içerikte aynı isim (md5 eşit DEĞİL — bu testte md5 grup'a girmezler)
-    # Onun yerine: aynı içerikli iki dosyanın aynı isimli olduğu senaryo
+def test_action_move_preserves_tree_hierarchy(tmp_path: Path):
+    """v1.2.2: aynı isimli dosyalar farklı subdir'lerde → tree-mirror move
+    (eski davranış: flat + _unique_target _1 suffix; yeni: relative_to mirror)."""
     a = tmp_path / "src" / "a"; a.mkdir(parents=True)
     b = tmp_path / "src" / "b"; b.mkdir()
     from PIL import Image
     img = Image.new("RGB", (256, 256), "red")
     img.save(a / "dup.jpg", quality=85)
     import shutil
-    shutil.copy(a / "dup.jpg", b / "dup.jpg")  # md5-eşit, aynı isim, farklı klasör
+    shutil.copy(a / "dup.jpg", b / "dup.jpg")
 
     res = find_exact_duplicates(tmp_path / "src", recursive=True)
     rejected = tmp_path / "rej"
@@ -115,7 +114,10 @@ def test_action_unique_target_no_overwrite(tmp_path: Path):
     assert len(ar.entries) == 1
     moved = Path(ar.entries[0].moved_to)
     assert moved.exists()
-    assert moved.parent == rejected.resolve()
+    # Tree-preserving: subdir altında (rejected/a/dup.jpg veya rejected/b/dup.jpg)
+    assert moved.parent != rejected.resolve(), "Tree korunmamış (flat)"
+    assert moved.parent.parent == rejected.resolve()
+    assert moved.parent.name in {"a", "b"}
 
 
 # ---------- undo_from_report ----------
