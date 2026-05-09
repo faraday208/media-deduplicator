@@ -274,6 +274,8 @@ uv run pytest
 
 ## 🏷️ Sürüm
 
+**v1.2.2** — pipeline integrasyonu cross-tool tutarlılık: **tree-preserving move**. Recursive tree-mode dataset (00 organize çıktısı) için duplicate move'ları artık subdir hiyerarşisini koruyor (`relative_to(scan_result.source_root)` mirror). Aynı isimli farklı subdir'lerdeki dup'lar `_unique_target` flat collision yerine kendi subdir altına taşınır. +1 regression test (65 toplam). Diğer tool'lar (01 validate, 03 quality, 04 watermark, 07 golden-set) ile tutarlı.
+
 **v1.2.0** — `FULL_SCORE_BPP` 0.15 → **0.5** (AI training context). Eşik göz-odaklı baseline'dan (JPG q70+) AI-odaklıya (JPG q90+ / lossless) yükseltildi: VAE encoder block-artifact'leri training noise olarak gözüktüğü için JPG q70 altı suboptimal. UI BPP renk eşikleri de senkron (sarı 0.05-0.5, yeşil ≥0.5). 2 yeni test (65 toplam). Insan-gözü kullanımı için sabit override edilebilir.
 
 **v1.1.0** — `keep_strategy="best"` BPP-aware composite skor (`(qualified_pixels, raw_pixels, size_bytes)` 3-tuple). Aşırı sıkıştırılmış (BPP < 0.05) dosyalar diskalifiye; "büyük resolution ama bozuk piksel" tuzağı çözüldü. Scanner sonuçlarına `width`/`height` eklendi (sadece grup üyelerine — IO maliyet az). Bonus bugfix: similar mode `distance` field'ı `int()` cast (eski `numpy.int64` JSON serialize fail ediyordu). 22 yeni test (63 toplam).

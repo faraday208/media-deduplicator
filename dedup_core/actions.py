@@ -186,6 +186,9 @@ def apply_action(
     if action == "move" and dst_root and not dry_run:
         dst_root.mkdir(parents=True, exist_ok=True)
 
+    # Tree-preserving move için source_root (ScanResult'tan); yoksa flat fallback
+    src_root = Path(scan_result.source_root).resolve() if scan_result.source_root else None
+
     for g in scan_result.groups:
         if not g.files:
             continue
@@ -215,9 +218,20 @@ def apply_action(
                     distance=f.get("distance"),
                 ))
             elif action == "move" and dst_root:
-                target = _unique_target(dst_root / original.name)
+                # Tree-preserving: original'ın src_root'a göre relative path'i
+                # dst_root altında mirror edilir. Source dışındaysa flat fallback.
+                if src_root is not None:
+                    try:
+                        rel = original.resolve().relative_to(src_root)
+                        proposed = dst_root / rel
+                    except ValueError:
+                        proposed = dst_root / original.name
+                else:
+                    proposed = dst_root / original.name
+                target = _unique_target(proposed)
                 if not dry_run:
                     try:
+                        target.parent.mkdir(parents=True, exist_ok=True)
                         shutil.move(str(original), str(target))
                     except OSError:
                         result.skipped += 1
