@@ -26,12 +26,12 @@ from pathlib import Path
 
 from dedup_core import (
     DEFAULT_IMAGE_EXTS,
-    DEFAULT_REPORT_NAME,
     Hasher,
     apply_action,
     find_exact_duplicates,
     find_similar_images,
     humanize_bytes,
+    report_name_for_mode,
     undo_from_report,
     write_report,
 )
@@ -51,7 +51,7 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument("-i", "--input", help="Input klasörü (validation modu için zorunlu)")
-    p.add_argument("-o", "--output", help=f"JSON rapor çıktısı (default: <input>/{DEFAULT_REPORT_NAME})")
+    p.add_argument("-o", "--output", help="JSON rapor çıktısı (default: <input>/duplicate_<mode>_report.json)")
     p.add_argument(
         "--mode",
         choices=["exact", "similar"],
@@ -123,9 +123,11 @@ def _run_undo(args: argparse.Namespace) -> int:
 def _resolve_report_path(args: argparse.Namespace, input_dir: Path) -> Path:
     if args.output:
         return Path(args.output)
+    # Mode'a göre kanonik isim: exact ve similar raporları birbirini ezmesin.
+    name = report_name_for_mode(args.mode)
     if args.invalid_action == "move" and args.invalid_dir:
-        return Path(args.invalid_dir) / DEFAULT_REPORT_NAME
-    return input_dir / DEFAULT_REPORT_NAME
+        return Path(args.invalid_dir) / name
+    return input_dir / name
 
 
 def main() -> int:

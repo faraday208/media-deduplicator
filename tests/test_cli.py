@@ -48,7 +48,8 @@ def test_resolve_report_path_move_uses_invalid_dir(tmp_path: Path):
         "--invalid-dir", str(tmp_path / "rej"),
     ])
     out = _resolve_report_path(args, tmp_path)
-    assert out == tmp_path / "rej" / "duplicate_report.json"
+    # mode default = exact → mode'a özel isim
+    assert out == tmp_path / "rej" / "duplicate_exact_report.json"
 
 
 def test_main_writes_report_exact(monkeypatch, exact_dup_dataset: Path):
@@ -58,12 +59,15 @@ def test_main_writes_report_exact(monkeypatch, exact_dup_dataset: Path):
     ])
     rc = main()
     assert rc == 0
-    report = exact_dup_dataset / "duplicate_report.json"
+    report = exact_dup_dataset / "duplicate_exact_report.json"
     assert report.exists()
     data = json.loads(report.read_text())
     assert data["tool"] == "media-deduplicator"
     assert data["mode"] == "exact"
     assert data["summary"]["groups"] >= 1
+    # exact mode içerik imzası
+    assert data["summary"]["match_type"] == "exact"
+    assert data["summary"]["hash_algorithm"] == "md5"
 
 
 def test_main_move_action_e2e(monkeypatch, exact_dup_dataset: Path, tmp_path: Path):
@@ -75,7 +79,7 @@ def test_main_move_action_e2e(monkeypatch, exact_dup_dataset: Path, tmp_path: Pa
     ])
     rc = main()
     assert rc == 0
-    assert (rejected / "duplicate_report.json").exists()
+    assert (rejected / "duplicate_exact_report.json").exists()
     # En az bir taşınmış dosya
     moved = list(rejected.glob("*.jpg"))
     assert len(moved) >= 1
@@ -107,7 +111,7 @@ def test_main_undo_cycle(monkeypatch, exact_dup_dataset: Path, tmp_path_factory)
 
     # Undo
     monkeypatch.setattr(sys, "argv", [
-        "run.py", "--undo", str(rejected / "duplicate_report.json"),
+        "run.py", "--undo", str(rejected / "duplicate_exact_report.json"),
     ])
     assert main() == 0
     files_after_undo = sorted(p.name for p in exact_dup_dataset.rglob("*.jpg"))
@@ -157,8 +161,13 @@ def test_main_best_strategy_picks_high_quality(monkeypatch, tmp_path: Path):
     assert rc == 0
 
     # Rapor okunup keeper'lar kontrol edilir
-    report = json.loads((rejected / "duplicate_report.json").read_text())
+    report = json.loads((rejected / "duplicate_similar_report.json").read_text())
     assert report["keep_strategy"] == "best"
+    # similar mode içerik imzası
+    assert report["summary"]["match_type"] == "perceptual"
+    assert report["summary"]["algorithm"] == "phash"
+    assert report["summary"]["threshold"] == 10
+    assert "distance_stats" in report["summary"]
 
     # Keeper'lar: best stratejisi her grupta yüksek-quality'i seçmeli
     for g in report["groups"]:
@@ -183,7 +192,7 @@ def test_main_best_strategy_with_no_dimensions_fallback_to_size(monkeypatch, tmp
     rc = main()
     assert rc == 0
 
-    report = json.loads((tmp_path / "duplicate_report.json").read_text())
+    report = json.loads((tmp_path / "duplicate_exact_report.json").read_text())
     assert report["keep_strategy"] == "best"
     # 1 grup, herhangi biri keeper olabilir (identical)
     assert report["summary"]["groups"] == 1

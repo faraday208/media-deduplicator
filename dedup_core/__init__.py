@@ -16,9 +16,12 @@ from .actions import (
 from .hasher import Hasher
 from .reporter import (
     DEFAULT_REPORT_NAME,
+    EXACT_REPORT_NAME,
     REPORT_TOOL,
     REPORT_VERSION,
+    SIMILAR_REPORT_NAME,
     humanize_bytes,
+    report_name_for_mode,
     write_report,
 )
 from .scanner import (
@@ -46,7 +49,10 @@ __all__ = [
     # Reporter
     "write_report",
     "humanize_bytes",
+    "report_name_for_mode",
     "DEFAULT_REPORT_NAME",
+    "EXACT_REPORT_NAME",
+    "SIMILAR_REPORT_NAME",
     "REPORT_TOOL",
     "REPORT_VERSION",
     # Hasher

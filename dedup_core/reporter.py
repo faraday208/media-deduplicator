@@ -32,7 +32,21 @@ from .scanner import ScanResult
 
 REPORT_VERSION = "1"
 REPORT_TOOL = "media-deduplicator"
+# Generic isim — geriye dönük uyumluluk (eski raporlar, manuel undo yolları).
 DEFAULT_REPORT_NAME = "duplicate_report.json"
+# Mode'a özel isimler: exact ve similar raporları birbirini ezmesin, yan yana
+# yaşasın (önce exact temizle → sonra similar review akışı için).
+EXACT_REPORT_NAME = "duplicate_exact_report.json"
+SIMILAR_REPORT_NAME = "duplicate_similar_report.json"
+
+
+def report_name_for_mode(mode: str) -> str:
+    """Mode'a göre kanonik rapor dosya ismi. Bilinmeyen mode → generic isim."""
+    if mode == "exact":
+        return EXACT_REPORT_NAME
+    if mode == "similar":
+        return SIMILAR_REPORT_NAME
+    return DEFAULT_REPORT_NAME
 
 
 def humanize_bytes(n: int) -> str:
@@ -44,6 +58,26 @@ def humanize_bytes(n: int) -> str:
     if n < 1024**3:
         return f"{n / (1024**2):.1f} MB"
     return f"{n / (1024**3):.2f} GB"
+
+
+def _distance_stats(scan_result: ScanResult) -> dict[str, Any]:
+    """Similar gruplarda keeper'a uzaklık (hamming distance) dağılımı. Her grupta
+    ilk dosya keeper (distance=0); istatistik duplicate'lerin uzaklığı üzerinden.
+    Review'da 'ne kadar agresif eşleşti' sorusunu cevaplar."""
+    distances = [
+        f["distance"]
+        for g in scan_result.groups
+        for f in g.files[1:]
+        if "distance" in f
+    ]
+    if not distances:
+        return {"count": 0, "min": None, "max": None, "avg": None}
+    return {
+        "count": len(distances),
+        "min": min(distances),
+        "max": max(distances),
+        "avg": round(sum(distances) / len(distances), 2),
+    }
 
 
 def write_report(
@@ -63,6 +97,17 @@ def write_report(
         "space_freeable_bytes": scan_result.space_freeable_bytes,
         "space_freeable_human": humanize_bytes(scan_result.space_freeable_bytes),
     }
+    # Mode'a özel rapor zenginleştirmesi: exact byte-identical (md5) kesinliğini,
+    # similar ise perceptual-hash karar parametrelerini + benzerlik dağılımını
+    # öne çıkarır. İki mode'un raporu artık hem isim hem içerikçe ayrışır.
+    if scan_result.mode == "similar":
+        summary["match_type"] = "perceptual"
+        summary["algorithm"] = config.get("algorithm")
+        summary["threshold"] = config.get("threshold")
+        summary["distance_stats"] = _distance_stats(scan_result)
+    else:
+        summary["match_type"] = "exact"
+        summary["hash_algorithm"] = "md5"
 
     payload = {
         "version": REPORT_VERSION,
