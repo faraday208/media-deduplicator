@@ -40,6 +40,27 @@ def test_collect_invalid_dir(tmp_path: Path):
     assert collect_images(tmp_path / "nope") == []
 
 
+def test_collect_skips_rejected_and_report_dirs(tmp_path: Path):
+    """Recursive scan _rejected/report klasörlerini atlar — reject dir dataset
+    içine düşse bile elenen dosyaları geri yutmaz (regresyon: exact tararken
+    rejected altına bakıyordu)."""
+    (tmp_path / "keep.jpg").write_bytes(b"x")
+    # reject dir dataset İÇİNDE (relative invalid_dir senaryosu)
+    (tmp_path / "_rejected" / "02-duplicate").mkdir(parents=True)
+    (tmp_path / "_rejected" / "02-duplicate" / "elenen.jpg").write_bytes(b"x")
+    (tmp_path / "report").mkdir()
+    (tmp_path / "report" / "rapor.jpg").write_bytes(b"x")
+    # meşru alt klasör atlanmamalı
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "deep.jpg").write_bytes(b"x")
+
+    names = [p.name for p in collect_images(tmp_path, recursive=True)]
+    assert "keep.jpg" in names
+    assert "deep.jpg" in names          # meşru alt klasör taranır
+    assert "elenen.jpg" not in names    # _rejected atlandı
+    assert "rapor.jpg" not in names     # report atlandı
+
+
 def test_collect_is_sorted(exact_dup_dataset: Path):
     paths = [str(p) for p in collect_images(exact_dup_dataset, recursive=True)]
     assert paths == sorted(paths)
