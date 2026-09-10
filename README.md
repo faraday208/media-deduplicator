@@ -13,6 +13,28 @@
 
 ---
 
+## English
+
+**What it does.** Finds duplicates in an image dataset in two modes: `exact` (MD5, byte-identical files) and `similar` (perceptual hash — phash/ahash/dhash/whash — which catches resized and recompressed copies). Reports, moves to `/rejected`, or deletes.
+
+**Install**
+
+```bash
+git clone https://github.com/faraday208/media-deduplicator
+cd media-deduplicator
+uv sync
+```
+
+**Basic usage**
+
+```bash
+uv run python run.py -i ./dataset
+```
+
+Step **02** of the [`media-dataset-prep`](https://github.com/faraday208/media-dataset-prep) pipeline; also works standalone. The detailed documentation below is in Turkish.
+
+---
+
 ## 🎯 Ne yapıyor?
 
 İki modlu duplicate tespiti:
